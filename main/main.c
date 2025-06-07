@@ -267,7 +267,7 @@ static void uart_rx(void* pvParameters)
 		ESP_LOGE(pcTaskGetName(NULL), "rxBuffer malloc Fail");
 		while(1) { vTaskDelay(1); }
 	}
-	char* payload = malloc(xItemSize+1);
+	char* payload = (char *)malloc(xItemSize+1);
 	if (payload == NULL) {
 		ESP_LOGE(pcTaskGetName(NULL), "payload malloc Fail");
 		while(1) { vTaskDelay(1); }

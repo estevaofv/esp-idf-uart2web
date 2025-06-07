@@ -86,8 +86,8 @@ ESP-IDF V5.1 is required when using ESP32-C6.
 
 	|AtMega328||ESP32|ESP32-S2/S3|ESP32-C2/C3/C6|
 	|:-:|:-:|:-:|:-:|:-:|
-	|TX|--|GPIO16|GPIO34|GPIO0|
-	|RX|--|GPIO17|GPIO35|GPIO1|
+	|TX|--|GPIO16|GPIO2|GPIO1|
+	|RX|--|GPIO17|GPIO1|GPIO0|
 	|GND|--|GND|GND|GND|
 
 	__You can change it to any pin using menuconfig.__   
