@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <time.h>
-#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -218,7 +217,9 @@ void uart_init(void) {
 static void uart_tx(void* pvParameters)
 {
 	ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_TX_GPIO);
-	char * messageBuffer = malloc(xItemSize+1);
+
+	// Allocate memory
+	char* messageBuffer = malloc(xItemSize+1);
 	if (messageBuffer == NULL) {
 		ESP_LOGE(pcTaskGetName(NULL), "messageBuffer malloc Fail");
 		while(1) { vTaskDelay(1); }
@@ -262,12 +263,14 @@ static void uart_tx(void* pvParameters)
 static void uart_rx(void* pvParameters)
 {
 	ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_RX_GPIO);
+
+	// Allocate memory
 	uint8_t* rxBuffer = (uint8_t*) malloc(xItemSize+1);
 	if (rxBuffer == NULL) {
 		ESP_LOGE(pcTaskGetName(NULL), "rxBuffer malloc Fail");
 		while(1) { vTaskDelay(1); }
 	}
-	char* payload = (char *)malloc(xItemSize+1);
+	char* payload = malloc(xItemSize+1);
 	if (payload == NULL) {
 		ESP_LOGE(pcTaskGetName(NULL), "payload malloc Fail");
 		while(1) { vTaskDelay(1); }
