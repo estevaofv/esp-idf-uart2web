@@ -1,5 +1,5 @@
 /*
-	Serial monitor client using WEB Socket.
+	UART - WebSocket bridge Example
 
 	This example code is in the Public Domain (or CC0 licensed, at your option.)
 	Unless required by applicable law or agreed to in writing, this
@@ -28,14 +28,21 @@
 
 #include "websocket_server.h"
 
+static const char *TAG = "MAIN";
+
 #if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0))
 #define sntp_setoperatingmode esp_sntp_setoperatingmode
 #define sntp_setservername esp_sntp_setservername
 #define sntp_init esp_sntp_init
 #endif
 
-MessageBufferHandle_t xMessageBufferToClient;
-MessageBufferHandle_t xMessageBufferToUart;
+MessageBufferHandle_t xMessageBufferRx;
+MessageBufferHandle_t xMessageBufferTx;
+
+// The total number of bytes (not messages) the message buffer will be able to hold at any one time.
+size_t xBufferSizeBytes = 1024;
+// The size, in bytes, required to hold each item in the message,
+size_t xItemSize = 256;
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
@@ -45,8 +52,6 @@ static EventGroupHandle_t s_wifi_event_group;
  * - we failed to connect after the maximum amount of retries */
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
-
-static const char *TAG = "main";
 
 static int s_retry_num = 0;
 
@@ -71,7 +76,7 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
 	}
 }
 
-void wifi_init_sta(void)
+esp_err_t wifi_init_sta(void)
 {
 	s_wifi_event_group = xEventGroupCreate();
 
@@ -111,14 +116,14 @@ void wifi_init_sta(void)
 			},
 		},
 	};
-	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
-	ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
-	ESP_ERROR_CHECK(esp_wifi_start() );
-
-	ESP_LOGI(TAG, "wifi_init_sta finished.");
+	ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+	ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+	ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+	ESP_ERROR_CHECK(esp_wifi_start());
 
 	/* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
 	 * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
+	esp_err_t ret_value = ESP_OK;
 	EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT, pdFALSE, pdFALSE, portMAX_DELAY);
 
 	/* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually
@@ -127,14 +132,17 @@ void wifi_init_sta(void)
 		ESP_LOGI(TAG, "connected to ap SSID:%s password:%s", CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD);
 	} else if (bits & WIFI_FAIL_BIT) {
 		ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s", CONFIG_ESP_WIFI_SSID, CONFIG_ESP_WIFI_PASSWORD);
+		ret_value = ESP_FAIL;
 	} else {
 		ESP_LOGE(TAG, "UNEXPECTED EVENT");
+		ret_value = ESP_FAIL;
 	}
 
 	/* The event will not be processed after unregister */
 	ESP_ERROR_CHECK(esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip));
 	ESP_ERROR_CHECK(esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id));
 	vEventGroupDelete(s_wifi_event_group);
+	return ret_value;
 }
 
 void initialise_mdns(void)
@@ -207,23 +215,38 @@ void uart_init(void) {
 	uart_set_pin(UART_NUM_1, CONFIG_UART_TX_GPIO, CONFIG_UART_RX_GPIO, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
-static void uart_tx_task(void* pvParameters)
+static void uart_tx(void* pvParameters)
 {
 	ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_TX_GPIO);
-	char messageBuffer[512];
+	char * messageBuffer = malloc(xItemSize+1);
+	if (messageBuffer == NULL) {
+		ESP_LOGE(pcTaskGetName(NULL), "messageBuffer malloc Fail");
+		while(1) { vTaskDelay(1); }
+	}
+	char* txBuffer = malloc(xItemSize+1);
+	if (txBuffer == NULL) {
+		ESP_LOGE(pcTaskGetName(NULL), "txBuffer malloc Fail");
+		while(1) { vTaskDelay(1); }
+	}
 
+	//char messageBuffer[xItemSize];
 	while(1) {
-		size_t readBytes = xMessageBufferReceive(xMessageBufferToUart, messageBuffer, sizeof(messageBuffer), portMAX_DELAY );
-		ESP_LOGI(pcTaskGetName(NULL), "readBytes=%d", readBytes);
+		size_t received = xMessageBufferReceive(xMessageBufferTx, messageBuffer, xItemSize, portMAX_DELAY );
+		ESP_LOGI(pcTaskGetName(NULL), "received=%d", received);
 		cJSON *root = cJSON_Parse(messageBuffer);
 		if (cJSON_GetObjectItem(root, "id")) {
 			char *id = cJSON_GetObjectItem(root,"id")->valuestring;
 			char *payload = cJSON_GetObjectItem(root,"payload")->valuestring;
 			ESP_LOGD(pcTaskGetName(NULL), "id=%s",id);
 			int payloadLen = strlen(payload);
-			ESP_LOGI(pcTaskGetName(NULL), "payloadLen=%d payload=%s",payloadLen, payload);
+			ESP_LOGI(pcTaskGetName(NULL), "payloadLen=%d payload=[%s]",payloadLen, payload);
 			if (payloadLen) {
-				int txBytes = uart_write_bytes(UART_NUM_1, payload, payloadLen);
+				ESP_LOG_BUFFER_HEXDUMP(pcTaskGetName(NULL), payload, payloadLen, ESP_LOG_INFO);
+				strncpy(txBuffer, payload, payloadLen);
+				txBuffer[payloadLen] = 0x0a;
+				ESP_LOG_BUFFER_HEXDUMP(pcTaskGetName(NULL), txBuffer, payloadLen+1, ESP_LOG_INFO);
+				//int txBytes = uart_write_bytes(UART_NUM_1, payload, payloadLen);
+				int txBytes = uart_write_bytes(UART_NUM_1, txBuffer, payloadLen+1);
 				ESP_LOGD(pcTaskGetName(NULL), "txBytes=%d", txBytes);
 			}
 		}
@@ -231,38 +254,39 @@ static void uart_tx_task(void* pvParameters)
 	} // end while
 
 	// Never reach here
+	free(messageBuffer);
+	free(txBuffer);
 	vTaskDelete(NULL);
 }
 
-static void uart_rx_task(void* pvParameters)
+static void uart_rx(void* pvParameters)
 {
 	ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_RX_GPIO);
-	uint8_t* rxBuf = (uint8_t*) malloc(RX_BUF_SIZE+1);
-	if (rxBuf == NULL) {
-		ESP_LOGE(pcTaskGetName(NULL), "rxBuf malloc Fail");
+	uint8_t* rxBuffer = (uint8_t*) malloc(xItemSize+1);
+	if (rxBuffer == NULL) {
+		ESP_LOGE(pcTaskGetName(NULL), "rxBuffer malloc Fail");
 		while(1) { vTaskDelay(1); }
 	}
-	char* payload = malloc(RX_BUF_SIZE+1);
+	char* payload = malloc(xItemSize+1);
 	if (payload == NULL) {
 		ESP_LOGE(pcTaskGetName(NULL), "payload malloc Fail");
 		while(1) { vTaskDelay(1); }
 	}
 
-	//char messageBuffer[512];
 	while (1) {
-		int rxBytes = uart_read_bytes(UART_NUM_1, rxBuf, RX_BUF_SIZE, 10 / portTICK_PERIOD_MS);
-		// There is some rxBuf in rx buffer
-		if (rxBytes > 0) {
-			rxBuf[rxBytes] = 0;
-			ESP_LOGD(pcTaskGetName(NULL), "rxBytes=%d", rxBytes);
-			ESP_LOG_BUFFER_HEXDUMP(pcTaskGetName(NULL), rxBuf, rxBytes, ESP_LOG_DEBUG);
+		int received = uart_read_bytes(UART_NUM_1, rxBuffer, xItemSize, 10 / portTICK_PERIOD_MS);
+		// There is some buffer in rx buffer
+		if (received > 0) {
+			rxBuffer[received] = 0;
+			ESP_LOGI(pcTaskGetName(NULL), "received=%d", received);
+			ESP_LOG_BUFFER_HEXDUMP(pcTaskGetName(NULL), rxBuffer, received, ESP_LOG_INFO);
 
 			int index = 0;
 			int ofs = 0;
 			while(1) {
-				if (rxBuf[index] == 0x0d) {
+				if (rxBuffer[index] == 0x0d) {
 
-				} else if (rxBuf[index] == 0x0a) {
+				} else if (rxBuffer[index] == 0x0a) {
 					cJSON *root;
 					root = cJSON_CreateObject();
 					cJSON_AddStringToObject(root, "id", "recv-request");
@@ -271,26 +295,26 @@ static void uart_rx_task(void* pvParameters)
 					char *my_json_string = cJSON_PrintUnformatted(root);
 					ESP_LOGD(pcTaskGetName(NULL), "my_json_string=[%s]",my_json_string);
 					cJSON_Delete(root);
-					xMessageBufferSend(xMessageBufferToClient, my_json_string, strlen(my_json_string), portMAX_DELAY);
+					xMessageBufferSend(xMessageBufferRx, my_json_string, strlen(my_json_string), portMAX_DELAY);
 					cJSON_free(my_json_string);
 
 					ofs = 0;
 				} else {
-					payload[ofs++] = rxBuf[index];
+					payload[ofs++] = rxBuffer[index];
 					payload[ofs] = 0;
 				}
 				index++;
-				if (index == rxBytes) break;
+				if (index == received) break;
 			} // end while
 
 		} else {
 			// There is no data in rx buufer
-			//ESP_LOGI(pcTaskGetName(NULL), "Read %d", rxBytes);
+			//ESP_LOGI(pcTaskGetName(NULL), "Read %d", received);
 		}
 	} // end while
 
 	// Never reach here
-	free(rxBuf);
+	free(rxBuffer);
 	free(payload);
 	vTaskDelete(NULL);
 }
@@ -308,27 +332,22 @@ void app_main() {
 	ESP_ERROR_CHECK(ret);
 
 	// Initialize WiFi
-	wifi_init_sta();
-
-	// Initialize mdns
-	initialise_mdns();
-
-	// Get current time
-	ret = obtain_time();
-	if(ret != ESP_OK) {
-		ESP_LOGE(TAG, "Fail to getting time over NTP.");
-		while(1) {
-			vTaskDelay(1);
-		}
-	}
+	ESP_ERROR_CHECK(wifi_init_sta());
 
 	// Initialize uart
 	uart_init();
 
-	xMessageBufferToClient = xMessageBufferCreate(1024);
-	configASSERT( xMessageBufferToClient );
-	xMessageBufferToUart = xMessageBufferCreate(1024);
-	configASSERT( xMessageBufferToUart );
+	// Initialize mdns
+	initialise_mdns();
+
+	// Obtain time over NTP
+	ESP_ERROR_CHECK(obtain_time());
+
+	// Create MessageBuffer
+	xMessageBufferRx = xMessageBufferCreate(xBufferSizeBytes);
+	configASSERT( xMessageBufferRx );
+	xMessageBufferTx = xMessageBufferCreate(xBufferSizeBytes);
+	configASSERT( xMessageBufferTx );
 
 	// Get the local IP address
 	esp_netif_ip_info_t ip_info;
@@ -347,8 +366,8 @@ void app_main() {
 	xTaskCreate(&client_task, "client_task", 1024*4, NULL, 5, NULL);
 
 	// Start uart trask
-	xTaskCreate(uart_tx_task, "uart_tx", 1024*4, NULL, 5, NULL);
-	xTaskCreate(uart_rx_task, "uart_rx", 1024*4, NULL, 5, NULL);
+	xTaskCreate(uart_tx, "uart_tx", 1024*4, NULL, 5, NULL);
+	xTaskCreate(uart_rx, "uart_rx", 1024*4, NULL, 5, NULL);
 
 	vTaskDelay(100);
 }

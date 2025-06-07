@@ -21,14 +21,15 @@ static const char *TAG = "client_task";
 
 #include "websocket_server.h"
 
-extern MessageBufferHandle_t xMessageBufferToClient;
-extern MessageBufferHandle_t xMessageBufferToUart;
+extern MessageBufferHandle_t xMessageBufferRx;
+extern MessageBufferHandle_t xMessageBufferTx;
+extern size_t xItemSize;
 
 void client_task(void* pvParameters) {
 	ESP_LOGI(TAG, "Start");
-	char messageBuffer[512];
+	char messageBuffer[xItemSize];
 	while(1) {
-		size_t readBytes = xMessageBufferReceive(xMessageBufferToClient, messageBuffer, sizeof(messageBuffer), portMAX_DELAY );
+		size_t readBytes = xMessageBufferReceive(xMessageBufferRx, messageBuffer, sizeof(messageBuffer), portMAX_DELAY );
 		ESP_LOGD(TAG, "readBytes=%d", readBytes);
 		cJSON *root = cJSON_Parse(messageBuffer);
 		if (cJSON_GetObjectItem(root, "id")) {
@@ -41,7 +42,7 @@ void client_task(void* pvParameters) {
 
 			// Do something when the send button pressed.
 			if ( strcmp (id, "send-request") == 0) {
-				xMessageBufferSend(xMessageBufferToUart, messageBuffer, readBytes, portMAX_DELAY);
+				xMessageBufferSend(xMessageBufferTx, messageBuffer, readBytes, portMAX_DELAY);
 			} // end of send-request
 
 			if ( strcmp (id, "recv-request") == 0) {

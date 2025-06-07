@@ -18,7 +18,7 @@
 #include "websocket_server.h"
 
 static QueueHandle_t client_queue;
-extern MessageBufferHandle_t xMessageBufferToClient;
+extern MessageBufferHandle_t xMessageBufferRx;
 
 const static int client_queue_size = 10;
 
@@ -43,7 +43,7 @@ void websocket_callback(uint8_t num,WEBSOCKET_TYPE_t type,char* msg,uint64_t len
 		case WEBSOCKET_TEXT:
 			if(len) { // if the message length was greater than zero
 				ESP_LOGI(TAG, "got message length %i: %s", (int)len, msg);
-				size_t xBytesSent = xMessageBufferSendFromISR(xMessageBufferToClient, msg, len, NULL);
+				size_t xBytesSent = xMessageBufferSendFromISR(xMessageBufferRx, msg, len, NULL);
 				if (xBytesSent != len) {
 					ESP_LOGE(TAG, "xMessageBufferSend fail");
 				}
