@@ -84,7 +84,7 @@ ESP-IDF V5.1 is required when using ESP32-C6.
 
 - Connect ESP32 and AtMega328 using wire cable   
 
-	|AtMega328||ESP32|ESP32-S2/S3|ESP32-C2/C3|
+	|AtMega328||ESP32|ESP32-S2/S3|ESP32-C2/C3/C6|
 	|:-:|:-:|:-:|:-:|:-:|
 	|TX|--|GPIO16|GPIO34|GPIO0|
 	|RX|--|GPIO17|GPIO35|GPIO1|
