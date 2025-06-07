@@ -54,7 +54,7 @@ The Arduino sketch inputs data with LF as the terminator.
 So strings from the ESP32 to the Arduino must be terminated with LF (0x0a).   
 If the string output from the ESP32 to the Arduino is not terminated with LF (0x0a), the Arduino sketch will complete the input with a timeout.   
 The default input timeout for Arduino sketches is 1000 milliseconds.   
-Since the string received from the browser does not have a trailing LF, this project will add one to the end and send it to Arduino.   
+Since the string received from the Browser does not have a trailing LF, this project will add one to the end and send it to Arduino.   
 The Arduino sketch will echo back the string it reads.   
 ```
 I (1285439) UART-TX: 0x3ffc72f8   61 62 63 64 65 66 67 0a                           |abcdefg.|
