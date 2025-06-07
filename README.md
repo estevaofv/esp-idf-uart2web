@@ -1,11 +1,11 @@
-# esp-idf-web-serial
+# esp-idf-uart2web
 This project is a wireless serial monitor using the ESP32 that can be accessed remotely via a web browser.   
 I used [this](https://github.com/Molorius/esp32-websocket) component.   
 This component can communicate directly with the browser.   
 It's a great job.   
 I referred to [this](https://github.com/ayushsharma82/WebSerial).   
-![Image](https://github.com/user-attachments/assets/7c17fa69-1b9e-4f52-8982-9cc85c0ea8d3)
-![Web-Serial](https://user-images.githubusercontent.com/6020549/204442158-0e8e1b11-caa8-4937-b830-99d331ca3fa6.jpg)
+![Image](https://github.com/user-attachments/assets/1cdf6361-3f1f-4f98-a433-56c7b6a257b3)   
+![Web-Serial](https://user-images.githubusercontent.com/6020549/204442158-0e8e1b11-caa8-4937-b830-99d331ca3fa6.jpg)   
 
 
 
