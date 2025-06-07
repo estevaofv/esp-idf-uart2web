@@ -113,6 +113,7 @@ ESP-IDF V5.1 is required when using ESP32-C6.
 
 # WEB Pages
 WEB Pages are stored in the html folder.   
+I used [this](https://bulma.io/) open source css.   
 You cam change root.html as you like.   
 
 # References
