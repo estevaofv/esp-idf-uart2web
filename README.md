@@ -17,20 +17,23 @@ ESP-IDF V5.1 is required when using ESP32-C6.
 ```
 git clone https://github.com/nopnop2002/esp-idf-uart2web
 cd esp-idf-uart2web/
-idf.py set-target {esp32/esp32s2/esp32s3/esp32c2/esp32c3}
 idf.py menuconfig
+idf.py flash
 ```
 
 # Configuration
 ![config-top](https://user-images.githubusercontent.com/6020549/164256546-da988299-c0ff-41e0-8c5a-45cdd11f9fe7.jpg)
 ![config-app](https://user-images.githubusercontent.com/6020549/164256573-1e6fc379-699a-4464-a93d-70160fe2a0b0.jpg)
 
+## WiFi Setting
 Set the information of your access point.   
 ![config-wifi](https://user-images.githubusercontent.com/6020549/164256660-c2def5c5-d524-483b-885a-fa8f32e9b471.jpg)
 
+## NTP Setting
 Set the information of your time zone.   
 ![config-ntp](https://user-images.githubusercontent.com/6020549/164256796-cf851736-2a8e-400f-b809-992aa2ff867e.jpg)
 
+## UART Setting
 Set GPIO to use with UART.   
 ![config-uart](https://user-images.githubusercontent.com/6020549/164256738-0f59817b-0deb-41b5-a4e5-379cbe3c2574.jpg)
 
