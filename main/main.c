@@ -363,14 +363,14 @@ void app_main() {
 	ws_server_start();
 
 	// Start web server
-	xTaskCreate(&server_task, "server_task", 1024*2, (void *)cparam0, 5, NULL);
+	xTaskCreate(&server_task, "server_task", 1024*10, (void *)cparam0, 5, NULL);
 
 	// Start web client
-	xTaskCreate(&client_task, "client_task", 1024*4, NULL, 5, NULL);
+	xTaskCreate(&client_task, "client_task", 1024*10, NULL, 5, NULL);
 
 	// Start uart trask
-	xTaskCreate(uart_tx, "uart_tx", 1024*4, NULL, 5, NULL);
-	xTaskCreate(uart_rx, "uart_rx", 1024*4, NULL, 5, NULL);
+	xTaskCreate(uart_tx, "uart_tx", 1024*10, NULL, 5, NULL);
+	xTaskCreate(uart_rx, "uart_rx", 1024*10, NULL, 5, NULL);
 
 	vTaskDelay(100);
 }

@@ -221,7 +221,7 @@ void server_task(void* pvParameters) {
 
 	UBaseType_t PriorityGet = uxTaskPriorityGet(NULL);
 	ESP_LOGI(TAG, "PriorityGet=%d", PriorityGet);
-	xTaskCreate(&server_handle_task, "server_handle_task", 1024*3, NULL, PriorityGet, NULL);
+	xTaskCreate(&server_handle_task, "server_handle_task", 1024*10, NULL, PriorityGet, NULL);
 
 	conn = netconn_new(NETCONN_TCP);
 	netconn_bind(conn,NULL,80);
