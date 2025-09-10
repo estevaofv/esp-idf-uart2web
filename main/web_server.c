@@ -40,15 +40,16 @@ void websocket_callback(uint8_t num,WEBSOCKET_TYPE_t type,char* msg,uint64_t len
 		case WEBSOCKET_DISCONNECT_ERROR:
 			ESP_LOGI(TAG,"client %i was disconnected due to an error",num);
 			break;
-		case WEBSOCKET_TEXT:
-			if(len) { // if the message length was greater than zero
-				ESP_LOGI(TAG, "got message length %i: %s", (int)len, msg);
-				size_t xBytesSent = xMessageBufferSendFromISR(xMessageBufferRx, msg, len, NULL);
-				if (xBytesSent != len) {
-					ESP_LOGE(TAG, "xMessageBufferSend fail");
-				}
-			}
-			break;
+        case WEBSOCKET_TEXT:
+            if(len) { // if the message length was greater than zero
+                ESP_LOGI(TAG, "got message length %i: %s", (int)len, msg);
+                // Use blocking send; this callback runs in task context
+                size_t xBytesSent = xMessageBufferSend(xMessageBufferRx, msg, len, portMAX_DELAY);
+                if (xBytesSent != len) {
+                    ESP_LOGE(TAG, "xMessageBufferSend failed (buffer full or length too large)");
+                }
+            }
+            break;
 		case WEBSOCKET_BIN:
 			ESP_LOGI(TAG,"client %i sent binary message of size %"PRIu32":\n%s",num,(uint32_t)len,msg);
 			break;

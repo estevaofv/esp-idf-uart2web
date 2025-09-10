@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <inttypes.h>
 #include <time.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -39,9 +40,20 @@ MessageBufferHandle_t xMessageBufferRx;
 MessageBufferHandle_t xMessageBufferTx;
 
 // The total number of bytes (not messages) the message buffer will be able to hold at any one time.
-size_t xBufferSizeBytes = 1024;
+size_t xBufferSizeBytes = 4096;
 // The size, in bytes, required to hold each item in the message,
-size_t xItemSize = 256;
+size_t xItemSize = 1024;
+
+// Helpers for little-endian parsing
+static inline uint32_t le32(const uint8_t *p) {
+    return ((uint32_t)p[0]) | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+static inline float lefloat(const uint8_t *p) {
+    uint32_t u = le32(p);
+    float f;
+    memcpy(&f, &u, sizeof(f));
+    return f;
+}
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
@@ -216,7 +228,7 @@ void uart_init(void) {
 
 static void uart_tx(void* pvParameters)
 {
-	ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_TX_GPIO);
+    ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_TX_GPIO);
 
 	// Allocate memory
 	char* messageBuffer = malloc(xItemSize+1);
@@ -231,11 +243,17 @@ static void uart_tx(void* pvParameters)
 	}
 
 	//char messageBuffer[xItemSize];
-	while(1) {
-		size_t received = xMessageBufferReceive(xMessageBufferTx, messageBuffer, xItemSize, portMAX_DELAY );
-		ESP_LOGI(pcTaskGetName(NULL), "received=%d", received);
-		cJSON *root = cJSON_Parse(messageBuffer);
-		if (cJSON_GetObjectItem(root, "id")) {
+    while(1) {
+        size_t received = xMessageBufferReceive(xMessageBufferTx, messageBuffer, xItemSize, portMAX_DELAY );
+        ESP_LOGI(pcTaskGetName(NULL), "received=%d", received);
+        if (received == 0) continue;
+        messageBuffer[received] = '\0';
+        cJSON *root = cJSON_Parse(messageBuffer);
+        if (!root) {
+            ESP_LOGW(pcTaskGetName(NULL), "Failed to parse JSON (len=%d)", (int)received);
+            continue;
+        }
+        if (cJSON_GetObjectItem(root, "id")) {
 			char *id = cJSON_GetObjectItem(root,"id")->valuestring;
 			char *payload = cJSON_GetObjectItem(root,"payload")->valuestring;
 			ESP_LOGD(pcTaskGetName(NULL), "id=%s",id);
@@ -262,10 +280,10 @@ static void uart_tx(void* pvParameters)
 
 static void uart_rx(void* pvParameters)
 {
-	ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_RX_GPIO);
+    ESP_LOGI(pcTaskGetName(NULL), "Start using GPIO%d", CONFIG_UART_RX_GPIO);
 
-	// Allocate memory
-	uint8_t* rxBuffer = (uint8_t*) malloc(xItemSize+1);
+    // Allocate memory
+    uint8_t* rxBuffer = (uint8_t*) malloc(xItemSize+1);
 	if (rxBuffer == NULL) {
 		ESP_LOGE(pcTaskGetName(NULL), "rxBuffer malloc Fail");
 		while(1) { vTaskDelay(1); }
@@ -274,47 +292,153 @@ static void uart_rx(void* pvParameters)
 	if (payload == NULL) {
 		ESP_LOGE(pcTaskGetName(NULL), "payload malloc Fail");
 		while(1) { vTaskDelay(1); }
-	}
+    }
 
-	while (1) {
-		int received = uart_read_bytes(UART_NUM_1, rxBuffer, xItemSize, 10 / portTICK_PERIOD_MS);
-		// There is some buffer in rx buffer
-		if (received > 0) {
-			rxBuffer[received] = 0;
-			ESP_LOGI(pcTaskGetName(NULL), "received=%d", received);
-			ESP_LOG_BUFFER_HEXDUMP(pcTaskGetName(NULL), rxBuffer, received, ESP_LOG_INFO);
+    // Streaming accumulator for binary frames and ASCII lines
+    static uint8_t accum[2048];
+    size_t accum_len = 0;
 
-			int index = 0;
-			int ofs = 0;
-			while(1) {
-				if (rxBuffer[index] == 0x0d) {
+    while (1) {
+        int received = uart_read_bytes(UART_NUM_1, rxBuffer, xItemSize, 10 / portTICK_PERIOD_MS);
+        if (received > 0) {
+            // Append to accumulator (drop oldest if overflow)
+            size_t to_copy = (size_t)received;
+            if (to_copy > sizeof(accum) - accum_len) {
+                size_t drop = to_copy - (sizeof(accum) - accum_len);
+                if (drop > accum_len) drop = accum_len;
+                if (drop > 0) {
+                    memmove(accum, accum + drop, accum_len - drop);
+                    accum_len -= drop;
+                    ESP_LOGW(pcTaskGetName(NULL), "Accumulator overflow, dropped %u bytes", (unsigned)drop);
+                }
+            }
+            memcpy(accum + accum_len, rxBuffer, to_copy);
+            accum_len += to_copy;
 
-				} else if (rxBuffer[index] == 0x0a) {
-					cJSON *root;
-					root = cJSON_CreateObject();
-					cJSON_AddStringToObject(root, "id", "recv-request");
-					cJSON_AddStringToObject(root, "payload", payload);
-					//char *my_json_string = cJSON_Print(root);
-					char *my_json_string = cJSON_PrintUnformatted(root);
-					ESP_LOGD(pcTaskGetName(NULL), "my_json_string=[%s]",my_json_string);
-					cJSON_Delete(root);
-					xMessageBufferSend(xMessageBufferRx, my_json_string, strlen(my_json_string), portMAX_DELAY);
-					cJSON_free(my_json_string);
+            // Try to parse frames and/or ASCII lines
+            size_t cursor = 0;
+            while (accum_len - cursor >= 1) {
+                // Search for MS72SF1 header 01 02 03 04 05 06 07 08
+                size_t i = cursor;
+                for (; i + 8 <= accum_len; i++) {
+                    if (accum[i+0]==0x01 && accum[i+1]==0x02 && accum[i+2]==0x03 && accum[i+3]==0x04 &&
+                        accum[i+4]==0x05 && accum[i+5]==0x06 && accum[i+6]==0x07 && accum[i+7]==0x08) {
+                        break;
+                    }
+                    // If ASCII linefeed before a header, flush ASCII line
+                    if (accum[i] == '\n') {
+                        size_t line_start = cursor;
+                        size_t line_len = i - line_start;
+                        // Trim optional CR
+                        if (line_len > 0 && accum[line_start + line_len - 1] == '\r') line_len--;
+                        size_t copy_len = line_len < xItemSize ? line_len : xItemSize;
+                        memcpy(payload, accum + line_start, copy_len);
+                        payload[copy_len] = 0;
 
-					ofs = 0;
-				} else {
-					payload[ofs++] = rxBuffer[index];
-					payload[ofs] = 0;
-				}
-				index++;
-				if (index == received) break;
-			} // end while
+                        cJSON *root = cJSON_CreateObject();
+                        cJSON_AddStringToObject(root, "id", "recv-request");
+                        cJSON_AddStringToObject(root, "payload", payload);
+                        char *my_json_string = cJSON_PrintUnformatted(root);
+                        cJSON_Delete(root);
+                        xMessageBufferSend(xMessageBufferRx, my_json_string, strlen(my_json_string), portMAX_DELAY);
+                        cJSON_free(my_json_string);
 
-		} else {
-			// There is no data in rx buufer
-			//ESP_LOGI(pcTaskGetName(NULL), "Read %d", received);
-		}
-	} // end while
+                        i++; // move past LF
+                        cursor = i;
+                    }
+                }
+
+                if (i + 8 > accum_len) {
+                    // No header found in current buffer; stop processing
+                    break;
+                }
+
+                // We found a header at i
+                if (i > cursor) {
+                    // Discard any preceding bytes as noise
+                    ESP_LOGD(pcTaskGetName(NULL), "Discarding %u noise bytes before header", (unsigned)(i - cursor));
+                    cursor = i;
+                }
+
+                if (accum_len - cursor < 12) break; // need header+length
+                uint32_t len = le32(accum + cursor + 8);
+                // Sanity check length
+                if (len == 0 || len > 1000) {
+                    ESP_LOGW(pcTaskGetName(NULL), "Suspicious frame length=%u; skipping header", (unsigned)len);
+                    cursor += 1; // rescan at next byte
+                    continue;
+                }
+                size_t total_needed = 8 + 4 + (size_t)len;
+                if (accum_len - cursor < total_needed) {
+                    // Wait for more bytes
+                    break;
+                }
+
+                // Parse frame content
+                const uint8_t *frame = accum + cursor;
+                uint32_t frame_type = le32(frame + 12);
+                size_t poff = 16; // payload offset after frame_type
+
+                cJSON *out = cJSON_CreateObject();
+                cJSON_AddStringToObject(out, "id", "recv-request");
+                cJSON *payload_obj = cJSON_CreateObject();
+                cJSON_AddStringToObject(payload_obj, "sensor", "MS72SF1");
+                cJSON_AddNumberToObject(payload_obj, "length", len);
+                cJSON_AddNumberToObject(payload_obj, "frame_type", frame_type);
+
+                // Attempt to parse records: pattern [0x00000000][index u32][x,y,z floats][12 zero pad]
+                cJSON *targets = cJSON_CreateArray();
+                size_t parsed_targets = 0;
+                while (poff + 4 + 4 + 12 <= 8 + 4 + len) {
+                    uint32_t tag0 = le32(frame + poff);
+                    uint32_t idx = le32(frame + poff + 4);
+                    float x = lefloat(frame + poff + 8);
+                    float y = lefloat(frame + poff + 12);
+                    float z = lefloat(frame + poff + 16);
+                    // Heuristics: tag0==0 and idx is small
+                    if (tag0 == 0 && idx < 16) {
+                        cJSON *t = cJSON_CreateObject();
+                        cJSON_AddNumberToObject(t, "id", idx);
+                        cJSON_AddNumberToObject(t, "x", x);
+                        cJSON_AddNumberToObject(t, "y", y);
+                        cJSON_AddNumberToObject(t, "z", z);
+                        cJSON_AddItemToArray(targets, t);
+                        parsed_targets++;
+                        // Skip record: 4(tag0)+4(idx)+12(floats)+12(pad)
+                        poff += 32;
+                    } else {
+                        // Advance by 4 bytes and continue searching
+                        poff += 4;
+                    }
+                }
+                cJSON_AddItemToObject(payload_obj, "targets", targets);
+                cJSON_AddNumberToObject(payload_obj, "targets_parsed", parsed_targets);
+
+                // Attach payload JSON as string field to match existing pipeline
+                char *payload_str = cJSON_PrintUnformatted(payload_obj);
+                cJSON_AddStringToObject(out, "payload", payload_str);
+                cJSON_free(payload_str);
+
+                char *out_str = cJSON_PrintUnformatted(out);
+                cJSON_Delete(out);
+
+                ESP_LOGI(pcTaskGetName(NULL), "Parsed MS72SF1 frame len=%u, targets=%u", (unsigned)len, (unsigned)parsed_targets);
+                xMessageBufferSend(xMessageBufferRx, out_str, strlen(out_str), portMAX_DELAY);
+                cJSON_free(out_str);
+
+                // Consume this frame from accumulator
+                cursor += total_needed;
+            }
+
+            // Remove consumed bytes
+            if (cursor > 0) {
+                if (cursor < accum_len) memmove(accum, accum + cursor, accum_len - cursor);
+                accum_len -= cursor;
+            }
+        } else {
+            // no data; yield
+        }
+    } // end while
 
 	// Never reach here
 	free(rxBuffer);

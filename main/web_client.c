@@ -71,12 +71,18 @@ static bool is_valid_utf8(const uint8_t *s, size_t len) {
 
 void client_task(void* pvParameters) {
     ESP_LOGI(TAG, "Start");
-    char messageBuffer[xItemSize];
+    char messageBuffer[xItemSize+1];
     while(1) {
-        size_t readBytes = xMessageBufferReceive(xMessageBufferRx, messageBuffer, sizeof(messageBuffer), portMAX_DELAY );
-		ESP_LOGD(TAG, "readBytes=%d", readBytes);
-		cJSON *root = cJSON_Parse(messageBuffer);
-		if (cJSON_GetObjectItem(root, "id")) {
+        size_t readBytes = xMessageBufferReceive(xMessageBufferRx, messageBuffer, sizeof(messageBuffer)-1, portMAX_DELAY );
+        ESP_LOGD(TAG, "readBytes=%d", readBytes);
+        if (readBytes == 0) continue;
+        messageBuffer[readBytes] = '\0';
+        cJSON *root = cJSON_Parse(messageBuffer);
+        if (!root) {
+            ESP_LOGW(TAG, "Failed to parse JSON (len=%d)", (int)readBytes);
+            continue;
+        }
+        if (cJSON_GetObjectItem(root, "id")) {
 			char *id = cJSON_GetObjectItem(root,"id")->valuestring;
 			ESP_LOGD(TAG, "id=%s",id);
 
@@ -121,8 +127,8 @@ void client_task(void* pvParameters) {
                 }
             } // end of recv-request
 
-		}
-		cJSON_Delete(root);
+        }
+        cJSON_Delete(root);
 	}
 	vTaskDelete(NULL);
 }
